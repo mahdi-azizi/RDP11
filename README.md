@@ -58,13 +58,13 @@ Install Python 3 from python.org, then:
 
 ```bat
 py -3 -m pip install -r requirements-agent.txt
-py -3 agent.py 77.83.198.200
+py -3 agent.py 85.206.170.117
 ```
 
 The server address can be given as a command-line argument (as above), with an
-optional `-p/--port` to override the agent port (e.g.
-`py -3 agent.py 77.83.198.200 -p 9000`). Without arguments the agent falls
-back to `agent_config.json`.
+optional `-p/--port` to override the agent port and `--pass` to specify a custom
+password for the session (e.g. `py -3 agent.py 77.83.198.200 -p 9000 --pass MySecret123`).
+Without arguments the agent falls back to `agent_config.json`.
 
 The console prints the machine's **session ID** (a stable 9-digit number derived
 from the machine GUID — it survives restarts). The agent reconnects

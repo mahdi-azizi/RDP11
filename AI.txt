@@ -44,6 +44,9 @@ DONE:
 - Server-side seamless viewer session handover: when an agent reconnects from a new IP/VPN, the active viewer mailbox is preserved and transferred to the new connection and streaming is resumed without kicking the viewer.
 - Client web viewer auto-reconnection in static/index.html.
 
+i need an improvement. client can determine its own password for remote session by command line argument switch --pass
+this may cause changes at server side either
+
 can you use udp instead of tcp? i need low latency and fast screen capture.
 
 add AES128 encryption to connection by creating a pre-shared key on server and client script and apply the encryption to the connection.

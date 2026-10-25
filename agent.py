@@ -30,7 +30,7 @@ pyautogui.FAILSAFE = False  # a remote session must not die on corner hits
 
 HERE = Path(__file__).resolve().parent
 CONFIG_PATH = HERE / "agent_config.json"
-DEFAULT_CONFIG = {"server": "77.83.198.200", "agent_port": 9000}
+DEFAULT_CONFIG = {"server": "77.83.198.200", "agent_port": 9000, "password": "p@ssW0RdDD!!!"}
 
 TYPE_MSG = 1
 TYPE_FRAME = 2
@@ -196,6 +196,7 @@ class AgentClient:
     def __init__(self, cfg):
         self.cfg = cfg
         self.sid = session_id()
+        self.password = str(cfg.get("password", "p@ssW0RdDD!!!"))
         self.sock = None
         self.send_lock = threading.Lock()
         self.active = threading.Event()  # a viewer is attached
@@ -260,7 +261,7 @@ class AgentClient:
         sock.settimeout(self.SOCKET_SLICE)
         self.sock = sock
         self.last_rx = time.time()
-        self.send_msg(sock, {"cmd": "register", "id": self.sid})
+        self.send_msg(sock, {"cmd": "register", "id": self.sid, "password": self.password})
         log.info("connected to %s:%d (session %d)",
                  self.cfg["server"], self.cfg["agent_port"], self.sid)
 
@@ -451,15 +452,19 @@ def main():
                              "(overrides agent_config.json)")
     parser.add_argument("-p", "--port", type=int,
                         help="agent TCP port (overrides agent_config.json)")
+    parser.add_argument("--pass", "--password", dest="password",
+                        help="session password for remote viewers (overrides agent_config.json)")
     args = parser.parse_args()
     if args.server:
         cfg["server"] = args.server
     if args.port:
         cfg["agent_port"] = args.port
+    if args.password is not None:
+        cfg["password"] = args.password
 
     client = AgentClient(cfg)
-    log.info("RDP11 agent starting - session ID %d (server %s:%d)",
-             client.sid, cfg["server"], cfg["agent_port"])
+    log.info("RDP11 agent starting - session ID %d (server %s:%d, password %s)",
+             client.sid, cfg["server"], cfg["agent_port"], client.password)
     worker = threading.Thread(target=client.run, daemon=True, name="agent-worker")
     worker.start()
     handler_ref = install_exit_handler(client, worker)

@@ -79,10 +79,11 @@ def configure_socket(sock_obj):
 
 
 class Agent:
-    def __init__(self, sid, conn, addr):
+    def __init__(self, sid, conn, addr, password=None):
         self.sid = sid
         self.conn = conn
         self.addr = addr
+        self.password = password
         self.send_lock = threading.Lock()
         self.viewer = None  # mailbox Queue of the attached viewer, or None
         self.alive = True
@@ -197,7 +198,8 @@ def handle_agent(conn, addr):
         sid = int(reg["id"])
         if not 100000000 <= sid <= 999999999:
             raise ConnectionError(f"invalid session id {sid}")
-        agent = Agent(sid, conn, addr)
+        agent_password = reg.get("password") or CONFIG.get("password")
+        agent = Agent(sid, conn, addr, password=agent_password)
         has_viewer = False
         with REG_LOCK:
             old = AGENTS.get(sid)
@@ -323,7 +325,8 @@ def handle_viewer(viewer, ip):
             viewer.send(json.dumps(
                 {"resp": "auth_fail", "error": "no agent online with that ID"}))
             return
-        if not compare_digest(str(CONFIG["password"]).encode(),
+        expected_pw = agent.password if getattr(agent, "password", None) is not None else CONFIG["password"]
+        if not compare_digest(str(expected_pw).encode(),
                               str(req.get("password", "")).encode()):
             record_failure(ip)
             log.warning("viewer %s: wrong password for agent %d", ip, sid)
