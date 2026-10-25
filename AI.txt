@@ -1,0 +1,28 @@
+i have implemented this project on current directory that fulfills this request:
+i want to create a remote desktop software(service) like any desk on my colleagues to access their clients from every ware in internet.
+it consist of two parts. one part is server software that runs on a alpine Linux server machine with a IP address.
+at client side, let me choose my server ip address and give it as command line argument to the agent.py.
+the second part is a windows software that runs on two clients. each client automatically connects to the server and gets a session id.
+each client can connect to the other windows machine and gets the full desktop access with the password "p@ssW0RdDD!!!"
+all client and server programs are written in python for the case of simplicity and vast variety of available network and system libraries.
+at this point i don't want any GUI for both programs. and i will add encryption later. i only want a prototype that works.
+i want the client view the remote client desktop through its default web browser.
+the communication protocol is not RDP, its a custom TCP socket.
+do you have any recommendation or improvement about my idea?
+description of project files:
+the server.py runs at server and opens TCP ports 8000 and 9000
+the agent.py runs at client side (example: py -3 agent.py 77.83.198.200 -p 9000)
+
+problems:
+
+at client side, let me choose my server ip address and give it as command line argument to the agent.py
+DONE: py -3 agent.py 77.83.198.200 -p 9000
+----------------------------------------------------------------------------------------------------------------
+i want to exit python code in client instantly when i press ctrl+c.
+currently it consumes lots of time to exit the program.
+
+at client side when i change my Ip by turning on my VPN connection, the connection sucks up and does not reconnect. the problem persists until i disconnect my vpn connection and close and start the client side python again. please solve the problem.
+
+can you use udp instead of tcp? i need low latency and fast screen capture.
+
+add AES128 encryption to connection by creating a pre-shared key on server and client script and apply the encryption to the connection.

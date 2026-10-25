@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RDP11 Viewer</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #14161a; color: #e6e6e6;
+         font: 14px/1.4 system-ui, sans-serif; overflow: hidden; }
+  #login { position: fixed; inset: 0; display: flex; flex-direction: column;
+           align-items: center; justify-content: center; gap: 10px; }
+  #login h1 { letter-spacing: 2px; margin: 0 0 4px; font-weight: 600; }
+  #login .hint { color: #9aa4b2; margin: 0 0 8px; max-width: 300px; text-align: center; }
+  #login input, #login button { font: inherit; padding: 9px 12px; border-radius: 6px;
+           border: 1px solid #333; background: #1d2127; color: inherit; width: 260px; }
+  #login button { background: #2f6fed; border-color: #2f6fed; cursor: pointer; }
+  #login button:hover { background: #245bd0; }
+  #err { color: #ff6b6b; min-height: 18px; max-width: 340px; text-align: center; }
+  #view { position: fixed; inset: 0; display: flex; flex-direction: column; }
+  #bar { display: flex; align-items: center; gap: 10px; padding: 6px 10px;
+         background: #1b1e24; border-bottom: 1px solid #262a31; }
+  #status { flex: 1; color: #9aa4b2; }
+  #bar button { font: inherit; padding: 5px 12px; border-radius: 6px;
+                border: 1px solid #333; background: #242932; color: inherit; cursor: pointer; }
+  #cwrap { flex: 1; display: flex; align-items: center; justify-content: center; overflow: hidden; }
+  canvas { background: #000; border-radius: 4px; cursor: crosshair; user-select: none; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+
+<div id="login">
+  <h1>RDP11</h1>
+  <p class="hint">Enter the session ID shown in the remote agent's console window.</p>
+  <form id="loginform">
+    <input id="sid" inputmode="numeric" placeholder="Session ID" autocomplete="off" autofocus>
+    <input id="pw" type="password" placeholder="Password" style="margin-top:10px">
+    <button type="submit" style="margin-top:10px;width:100%">Connect</button>
+  </form>
+  <div id="err"></div>
+</div>
+
+<div id="view" hidden>
+  <div id="bar">
+    <span id="status"></span>
+    <button id="fs">Fullscreen</button>
+    <button id="disc">Disconnect</button>
+  </div>
+  <div id="cwrap"><canvas id="cv" width="0" height="0"></canvas></div>
+</div>
+
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+const cv = $("cv"), ctx = cv.getContext("2d");
+let ws = null, connected = false, sawAuthOk = false;
+let wheelAcc = 0, lastMove = 0;
+
+function err(t) { $("err").textContent = t; }
+
+function showLogin(msg) {
+  connected = false; sawAuthOk = false;
+  if (ws) {
+    ws.onopen = ws.onmessage = ws.onclose = ws.onerror = null;
+    try { ws.close(); } catch (e) {}
+    ws = null;
+  }
+  $("view").hidden = true;
+  $("login").hidden = false;
+  err(msg || "");
+}
+
+function connect() {
+  const sid = $("sid").value.trim();
+  if (!/^\d{6,12}$/.test(sid)) { err("Enter the numeric session ID"); return; }
+  err("Connecting...");
+  ws = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") +
+                     location.host + "/ws");
+  ws.binaryType = "arraybuffer";
+  ws.onopen = () => ws.send(JSON.stringify(
+      { cmd: "auth", id: Number(sid), password: $("pw").value }));
+  ws.onmessage = onMsg;
+  ws.onerror = () => {};
+  ws.onclose = e => showLogin(sawAuthOk ? "Connection closed"
+      : (e.code === 1006 ? "Could not connect to server" : "Disconnected (" + e.code + ")"));
+}
+
+function onMsg(e) {
+  if (e.data instanceof ArrayBuffer) { draw(e.data); return; }
+  let m;
+  try { m = JSON.parse(e.data); } catch (err2) { return; }
+  if (m.resp === "auth_ok") {
+    sawAuthOk = true; connected = true;
+    $("login").hidden = true; $("view").hidden = false;
+    $("status").textContent = "Connected to session " + m.id;
+  } else if (m.resp === "auth_fail" || m.resp === "error") {
+    showLogin(m.error || "Error");
+  }
+}
+
+function disconnect() { showLogin(""); }
+
+function send(o) { if (ws && ws.readyState === 1) ws.send(JSON.stringify(o)); }
+
+function draw(buf) {
+  createImageBitmap(new Blob([buf], { type: "image/jpeg" })).then(bmp => {
+    if (cv.width !== bmp.width || cv.height !== bmp.height) {
+      cv.width = bmp.width; cv.height = bmp.height; fit();
+    }
+    ctx.drawImage(bmp, 0, 0);
+    if (bmp.close) bmp.close();
+  }).catch(() => {});
+}
+
+function fit() {
+  if (!cv.width) return;
+  const aw = innerWidth - 16, ah = innerHeight - 44;
+  const s = Math.min(aw / cv.width, ah / cv.height);
+  cv.style.width = Math.round(cv.width * s) + "px";
+  cv.style.height = Math.round(cv.height * s) + "px";
+}
+window.addEventListener("resize", fit);
+
+// Coordinates are mapped from displayed canvas size back to frame pixels;
+// the agent scales them again from frame pixels to real screen pixels.
+function imgPos(e) {
+  if (!cv.width) return null;
+  const r = cv.getBoundingClientRect();
+  return {
+    x: Math.max(0, Math.min(cv.width, Math.round((e.clientX - r.left) * cv.width / r.width))),
+    y: Math.max(0, Math.min(cv.height, Math.round((e.clientY - r.top) * cv.height / r.height))),
+  };
+}
+
+cv.addEventListener("mousemove", e => {
+  const now = performance.now();
+  if (now - lastMove < 30) return;  // ~30 moves/s is plenty
+  lastMove = now;
+  const p = imgPos(e);
+  if (p) send({ cmd: "input", type: "move", x: p.x, y: p.y });
+});
+cv.addEventListener("mousedown", e => {
+  e.preventDefault();
+  const p = imgPos(e);
+  if (p) send({ cmd: "input", type: "btn", button: e.button, down: true, x: p.x, y: p.y });
+});
+cv.addEventListener("mouseup", e => {
+  const p = imgPos(e);
+  if (p) send({ cmd: "input", type: "btn", button: e.button, down: false, x: p.x, y: p.y });
+});
+cv.addEventListener("contextmenu", e => e.preventDefault());
+cv.addEventListener("wheel", e => {
+  e.preventDefault();
+  wheelAcc += e.deltaY;
+  if (Math.abs(wheelAcc) >= 120) {
+    send({ cmd: "input", type: "wheel", amount: wheelAcc > 0 ? -2 : 2 });
+    wheelAcc = 0;
+  }
+}, { passive: false });
+
+// F5/F11/F12 stay with the browser (refresh/fullscreen/devtools); everything
+// else is forwarded and the browser's own handling is suppressed.
+function keyHandler(down) {
+  return e => {
+    if (!connected) return;
+    if (e.key === "F5" || e.key === "F11" || e.key === "F12") return;
+    e.preventDefault();
+    send({ cmd: "input", type: "key", key: e.key, code: e.code, down });
+  };
+}
+window.addEventListener("keydown", keyHandler(true));
+window.addEventListener("keyup", keyHandler(false));
+// Leaving the tab/window must not leave keys stuck down on the remote machine.
+window.addEventListener("blur", () => { if (connected) send({ cmd: "input", type: "release_all" }); });
+
+setInterval(() => { if (connected) send({ cmd: "ping" }); }, 15000);
+
+$("loginform").addEventListener("submit", e => { e.preventDefault(); connect(); });
+$("disc").addEventListener("click", disconnect);
+$("fs").addEventListener("click", () => {
+  if (document.fullscreenElement) document.exitFullscreen();
+  else document.documentElement.requestFullscreen();
+});
+</script>
+</body>
+</html>
