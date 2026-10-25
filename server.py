@@ -60,6 +60,24 @@ AUTH_LOCK = threading.Lock()
 AUTH_FAILS = {}  # viewer ip -> [failure timestamps]
 
 
+def configure_socket(sock_obj):
+    """Enable TCP keepalive and low latency."""
+    sock_obj.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+    sock_obj.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+    if hasattr(socket, "SIO_KEEPALIVE_VALS"):
+        try:
+            sock_obj.ioctl(socket.SIO_KEEPALIVE_VALS, (1, 3000, 1000))
+        except OSError:
+            pass
+    elif hasattr(socket, "TCP_KEEPIDLE"):
+        try:
+            sock_obj.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPIDLE, 5)
+            sock_obj.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, 2)
+            sock_obj.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPCNT, 3)
+        except OSError:
+            pass
+
+
 class Agent:
     def __init__(self, sid, conn, addr):
         self.sid = sid
@@ -168,7 +186,8 @@ def handle_agent(conn, addr):
     agent = None
     sid = None
     try:
-        conn.settimeout(90)  # agents ping every 15 s, so this only fires on a dead peer
+        configure_socket(conn)
+        conn.settimeout(15)  # agents ping every 3 s; 15 s timeout detects dead connection promptly
         ptype, payload = recv_packet(conn)
         if ptype != TYPE_MSG:
             raise ConnectionError("first packet must be a register message")
@@ -179,14 +198,27 @@ def handle_agent(conn, addr):
         if not 100000000 <= sid <= 999999999:
             raise ConnectionError(f"invalid session id {sid}")
         agent = Agent(sid, conn, addr)
+        has_viewer = False
         with REG_LOCK:
             old = AGENTS.get(sid)
             AGENTS[sid] = agent
+            if old is not None and old.viewer is not None:
+                # Seamlessly transfer the active viewer to the new connection
+                agent.viewer = old.viewer
+                old.viewer = None
+                has_viewer = True
         if old is not None:
-            log.info("agent %d re-registered, dropping old connection", sid)
+            log.info("agent %d re-registered from %s, dropping previous connection", sid, addr[0])
             old.close()
         agent.send_msg({"resp": "register_ok", "id": sid})
         log.info("agent %d registered from %s", sid, addr[0])
+
+        if has_viewer:
+            log.info("agent %d preserved active viewer session, resuming stream", sid)
+            try:
+                agent.send_msg({"cmd": "start"})
+            except OSError:
+                pass
 
         while True:
             ptype, payload = recv_packet(conn)
@@ -200,7 +232,7 @@ def handle_agent(conn, addr):
                     agent.send_msg({"resp": "pong"})
                 else:
                     log.debug("agent %d sent unknown message: %r", sid, msg)
-    except (ConnectionError, socket.timeout, OSError, ValueError,
+    except (ConnectionError, socket.timeout, TimeoutError, OSError, ValueError,
             json.JSONDecodeError) as exc:
         if agent is not None:
             log.info("agent %d connection ended: %s", sid, exc)
@@ -208,10 +240,13 @@ def handle_agent(conn, addr):
             log.info("agent handshake from %s failed: %s", addr[0], exc)
     finally:
         if agent is not None:
+            should_unbind = False
             with REG_LOCK:
                 if AGENTS.get(sid) is agent:
                     del AGENTS[sid]
-            unbind_viewer(agent, "agent disconnected")
+                    should_unbind = True
+            if should_unbind:
+                unbind_viewer(agent, "agent disconnected")
         try:
             conn.close()
         except OSError:
@@ -267,7 +302,7 @@ def viewer_sender(viewer, mailbox):
 
 def handle_viewer(viewer, ip):
     mailbox = None
-    agent = None
+    sid = None
     try:
         msg = viewer.ws.receive()
         if msg is None:
@@ -285,7 +320,6 @@ def handle_viewer(viewer, ip):
         with REG_LOCK:
             agent = AGENTS.get(sid)
         if agent is None or not agent.alive:
-            agent = None
             viewer.send(json.dumps(
                 {"resp": "auth_fail", "error": "no agent online with that ID"}))
             return
@@ -299,7 +333,6 @@ def handle_viewer(viewer, ip):
         mailbox = queue.Queue(maxsize=60)
         with REG_LOCK:
             if not agent.alive or AGENTS.get(sid) is not agent:
-                agent = None
                 viewer.send(json.dumps(
                     {"resp": "auth_fail", "error": "agent just went offline"}))
                 return
@@ -326,24 +359,30 @@ def handle_viewer(viewer, ip):
             if cmd == "input":
                 clean = sanitize_input(data)
                 if clean is not None:
-                    try:
-                        agent.send_msg({"cmd": "input", **clean})
-                    except OSError:
-                        break
+                    # Dynamically look up current agent in case agent reconnected from new IP
+                    with REG_LOCK:
+                        cur_agent = AGENTS.get(sid)
+                    if cur_agent is not None and cur_agent.alive:
+                        try:
+                            cur_agent.send_msg({"cmd": "input", **clean})
+                        except OSError:
+                            pass
             elif cmd == "ping":
                 viewer.send(json.dumps({"resp": "pong"}))
     except (ConnectionError, OSError, ValueError, json.JSONDecodeError) as exc:
         log.info("viewer %s: %s", ip, exc)
     finally:
-        if agent is not None and mailbox is not None:
+        if mailbox is not None and sid is not None:
             stop = False
+            cur_agent = None
             with REG_LOCK:
-                if agent.viewer is mailbox:
-                    agent.viewer = None
+                cur_agent = AGENTS.get(sid)
+                if cur_agent is not None and cur_agent.viewer is mailbox:
+                    cur_agent.viewer = None
                     stop = True
-            if stop and agent.alive:
+            if stop and cur_agent is not None and cur_agent.alive:
                 try:
-                    agent.send_msg({"cmd": "stop"})
+                    cur_agent.send_msg({"cmd": "stop"})
                 except OSError:
                     pass
             try:

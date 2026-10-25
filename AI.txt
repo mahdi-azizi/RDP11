@@ -8,7 +8,20 @@ all client and server programs are written in python for the case of simplicity 
 at this point i don't want any GUI for both programs. and i will add encryption later. i only want a prototype that works.
 i want the client view the remote client desktop through its default web browser.
 the communication protocol is not RDP, its a custom TCP socket.
-do you have any recommendation or improvement about my idea?
+
+
+my problem is:
+at client side when i change my Ip by turning on my VPN connection, the connection sucks up and does not reconnect. the problem persists until i disconnect my vpn connection and close and start the client side python again. please solve the problem.
+DONE:
+- Added fast active heartbeat watchdog (3s interval, 8s timeout) and sliced recv so silent connection loss (like VPN routing switch / IP change) is detected in seconds instead of blocking for 90s or indefinitely.
+- Enabled TCP keepalive (SIO_KEEPALIVE_VALS on Windows, TCP_KEEPIDLE on Linux) and TCP_NODELAY on sockets.
+- Fixed Winsock socket abort: socket.shutdown(socket.SHUT_RDWR) is called before close() to unblock any thread stuck in sendall/recv/select on Windows.
+- Fixed send_lock deadlock across reconnects by using lock timeouts and per-session validation.
+- Reset reconnect backoff upon successful connection so retries happen rapidly (1s) rather than remaining throttled at 30s.
+- Server-side seamless viewer session handover: when an agent reconnects from a new IP/VPN, the active viewer mailbox is preserved and transferred to the new connection and streaming is resumed without kicking the viewer.
+- Client web viewer auto-reconnection in static/index.html.
+please read all files and solve the problem.
+
 description of project files:
 the server.py runs at server and opens TCP ports 8000 and 9000
 the agent.py runs at client side (example: py -3 agent.py 77.83.198.200 -p 9000)
@@ -22,6 +35,14 @@ i want to exit python code in client instantly when i press ctrl+c.
 currently it consumes lots of time to exit the program.
 
 at client side when i change my Ip by turning on my VPN connection, the connection sucks up and does not reconnect. the problem persists until i disconnect my vpn connection and close and start the client side python again. please solve the problem.
+DONE:
+- Added fast active heartbeat watchdog (3s interval, 8s timeout) and sliced recv so silent connection loss (like VPN routing switch / IP change) is detected in seconds instead of blocking for 90s or indefinitely.
+- Enabled TCP keepalive (SIO_KEEPALIVE_VALS on Windows, TCP_KEEPIDLE on Linux) and TCP_NODELAY on sockets.
+- Fixed Winsock socket abort: socket.shutdown(socket.SHUT_RDWR) is called before close() to unblock any thread stuck in sendall/recv/select on Windows.
+- Fixed send_lock deadlock across reconnects by using lock timeouts and per-session validation.
+- Reset reconnect backoff upon successful connection so retries happen rapidly (1s) rather than remaining throttled at 30s.
+- Server-side seamless viewer session handover: when an agent reconnects from a new IP/VPN, the active viewer mailbox is preserved and transferred to the new connection and streaming is resumed without kicking the viewer.
+- Client web viewer auto-reconnection in static/index.html.
 
 can you use udp instead of tcp? i need low latency and fast screen capture.
 

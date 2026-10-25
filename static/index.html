@@ -57,11 +57,13 @@ const $ = id => document.getElementById(id);
 const cv = $("cv"), ctx = cv.getContext("2d");
 let ws = null, connected = false, sawAuthOk = false;
 let wheelAcc = 0, lastMove = 0;
+let reconnectTimer = null, userDisconnected = false;
 
 function err(t) { $("err").textContent = t; }
 
 function showLogin(msg) {
   connected = false; sawAuthOk = false;
+  if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
   if (ws) {
     ws.onopen = ws.onmessage = ws.onclose = ws.onerror = null;
     try { ws.close(); } catch (e) {}
@@ -72,10 +74,34 @@ function showLogin(msg) {
   err(msg || "");
 }
 
-function connect() {
+function scheduleReconnect(reason) {
+  if (userDisconnected || !sawAuthOk) return;
+  connected = false;
+  $("status").textContent = (reason || "Connection lost") + " — Reconnecting...";
+  if (reconnectTimer) clearTimeout(reconnectTimer);
+  reconnectTimer = setTimeout(() => {
+    reconnectTimer = null;
+    if (!userDisconnected) {
+      connect(true);
+    }
+  }, 1500);
+}
+
+function connect(isAutoReconnect = false) {
   const sid = $("sid").value.trim();
   if (!/^\d{6,12}$/.test(sid)) { err("Enter the numeric session ID"); return; }
-  err("Connecting...");
+  userDisconnected = false;
+  if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+  if (!isAutoReconnect) {
+    err("Connecting...");
+  } else {
+    $("status").textContent = "Reconnecting to session " + sid + "...";
+  }
+  if (ws) {
+    ws.onopen = ws.onmessage = ws.onclose = ws.onerror = null;
+    try { ws.close(); } catch (e) {}
+    ws = null;
+  }
   ws = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") +
                      location.host + "/ws");
   ws.binaryType = "arraybuffer";
@@ -83,8 +109,13 @@ function connect() {
       { cmd: "auth", id: Number(sid), password: $("pw").value }));
   ws.onmessage = onMsg;
   ws.onerror = () => {};
-  ws.onclose = e => showLogin(sawAuthOk ? "Connection closed"
-      : (e.code === 1006 ? "Could not connect to server" : "Disconnected (" + e.code + ")"));
+  ws.onclose = e => {
+    if (sawAuthOk && !userDisconnected) {
+      scheduleReconnect("Disconnected (" + e.code + ")");
+    } else {
+      showLogin(e.code === 1006 ? "Could not connect to server" : "Disconnected (" + e.code + ")");
+    }
+  };
 }
 
 function onMsg(e) {
@@ -100,7 +131,11 @@ function onMsg(e) {
   }
 }
 
-function disconnect() { showLogin(""); }
+function disconnect() {
+  userDisconnected = true;
+  if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+  showLogin("");
+}
 
 function send(o) { if (ws && ws.readyState === 1) ws.send(JSON.stringify(o)); }
 
