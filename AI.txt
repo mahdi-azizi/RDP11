@@ -70,3 +70,6 @@ Server side:
 
 http://85.206.170.117:8080
 p@ssW0RdDD!!!
+
+
+py -3 agent.py 85.206.170.117 -p 9000 -u 9001 --pass MySecret123 --fps 60
