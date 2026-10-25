@@ -27,10 +27,11 @@ import pyautogui
 from PIL import Image, ImageChops
 
 pyautogui.FAILSAFE = False  # a remote session must not die on corner hits
+pyautogui.PAUSE = 0         # remove PyAutoGUI's default 100ms artificial sleep!
 
 HERE = Path(__file__).resolve().parent
 CONFIG_PATH = HERE / "agent_config.json"
-DEFAULT_CONFIG = {"server": "77.83.198.200", "agent_port": 9000, "password": "p@ssW0RdDD!!!"}
+DEFAULT_CONFIG = {"server": "77.83.198.200", "agent_port": 9000, "password": "p@ssW0RdDD!!!", "fps": 30}
 
 TYPE_MSG = 1
 TYPE_FRAME = 2
@@ -153,15 +154,18 @@ def map_key(code, key):
 
 
 class ScreenStreamer:
-    MAX_WIDTH = 1600     # px; larger screens are downscaled before encoding
+    MAX_WIDTH = 1920     # px; standard 1080p is unscaled; 2K/4K downscaled
     JPEG_QUALITY = 55
-    MAX_FPS = 10
+    DEFAULT_FPS = 30
 
-    def __init__(self):
+    def __init__(self, fps=30, quality=55, max_width=1920):
         self.sct = mss.mss()
         self.prev = None
         self.scale_x = 1.0
         self.scale_y = 1.0
+        self.fps = fps
+        self.quality = quality
+        self.max_width = max_width
 
     def reset(self):
         """Force the next frame out even if the screen looks unchanged."""
@@ -171,9 +175,9 @@ class ScreenStreamer:
         mon = self.sct.monitors[1]  # primary monitor only, for now
         raw = self.sct.grab(mon)
         img = Image.frombytes("RGB", raw.size, raw.rgb)
-        if img.width > self.MAX_WIDTH:
-            height = round(img.height * self.MAX_WIDTH / img.width)
-            img = img.resize((self.MAX_WIDTH, height), Image.BILINEAR)
+        if img.width > self.max_width:
+            height = round(img.height * self.max_width / img.width)
+            img = img.resize((self.max_width, height), Image.NEAREST)
         if self.prev is not None and self.prev.size == img.size:
             if ImageChops.difference(self.prev, img).getbbox() is None:
                 return None  # screen unchanged - skip encode and send
@@ -181,7 +185,7 @@ class ScreenStreamer:
         self.scale_x = mon["width"] / img.width
         self.scale_y = mon["height"] / img.height
         buf = io.BytesIO()
-        img.save(buf, "JPEG", quality=self.JPEG_QUALITY)
+        img.save(buf, "JPEG", quality=self.quality, subsampling=2)
         return buf.getvalue()
 
 
@@ -197,6 +201,7 @@ class AgentClient:
         self.cfg = cfg
         self.sid = session_id()
         self.password = str(cfg.get("password", "p@ssW0RdDD!!!"))
+        self.fps = max(1, min(60, int(cfg.get("fps", 30))))
         self.sock = None
         self.send_lock = threading.Lock()
         self.active = threading.Event()  # a viewer is attached
@@ -344,13 +349,13 @@ class AgentClient:
                 pass
 
     def capture_loop(self):
-        interval = 1.0 / ScreenStreamer.MAX_FPS
+        interval = 1.0 / self.fps
         while not self.stop.is_set():
             if not self.active.wait(timeout=0.5):
                 continue
             if self.streamer is None:
                 try:
-                    self.streamer = ScreenStreamer()
+                    self.streamer = ScreenStreamer(fps=self.fps)
                 except Exception as exc:
                     log.error("screen capture unavailable: %s", exc)
                     time.sleep(1.0)
@@ -360,7 +365,7 @@ class AgentClient:
                 jpeg = self.streamer.grab_jpeg()
             except Exception as exc:
                 log.warning("capture failed: %s", exc)
-                time.sleep(0.5)
+                time.sleep(0.1)
                 continue
             if jpeg is not None:
                 sock = self.sock
@@ -383,8 +388,13 @@ class AgentClient:
         try:
             typ = msg.get("type")
             if typ == "move":
-                pyautogui.moveTo(round(msg["x"] * streamer.scale_x),
-                                 round(msg["y"] * streamer.scale_y))
+                target_x = round(msg["x"] * streamer.scale_x)
+                target_y = round(msg["y"] * streamer.scale_y)
+                if sys.platform == "win32":
+                    import ctypes
+                    ctypes.windll.user32.SetCursorPos(target_x, target_y)
+                else:
+                    pyautogui.moveTo(target_x, target_y)
             elif typ == "btn":
                 button = {0: "left", 1: "middle", 2: "right"}.get(msg["button"])
                 if button is None:
@@ -454,6 +464,8 @@ def main():
                         help="agent TCP port (overrides agent_config.json)")
     parser.add_argument("--pass", "--password", dest="password",
                         help="session password for remote viewers (overrides agent_config.json)")
+    parser.add_argument("--fps", type=int,
+                        help="target streaming FPS, e.g. 30 or 60 (overrides agent_config.json, default: 30)")
     args = parser.parse_args()
     if args.server:
         cfg["server"] = args.server
@@ -461,10 +473,12 @@ def main():
         cfg["agent_port"] = args.port
     if args.password is not None:
         cfg["password"] = args.password
+    if args.fps is not None:
+        cfg["fps"] = args.fps
 
     client = AgentClient(cfg)
-    log.info("RDP11 agent starting - session ID %d (server %s:%d, password %s)",
-             client.sid, cfg["server"], cfg["agent_port"], client.password)
+    log.info("RDP11 agent starting - session ID %d (server %s:%d, %d FPS, password %s)",
+             client.sid, cfg["server"], cfg["agent_port"], client.fps, client.password)
     worker = threading.Thread(target=client.run, daemon=True, name="agent-worker")
     worker.start()
     handler_ref = install_exit_handler(client, worker)

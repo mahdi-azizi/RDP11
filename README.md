@@ -61,9 +61,9 @@ py -3 -m pip install -r requirements-agent.txt
 py -3 agent.py 85.206.170.117
 ```
 
-The server address can be given as a command-line argument (as above), with an
-optional `-p/--port` to override the agent port and `--pass` to specify a custom
-password for the session (e.g. `py -3 agent.py 77.83.198.200 -p 9000 --pass MySecret123`).
+The server address can be given as a command-line argument (as above), with optional
+`-p/--port` to override the agent port, `--pass` to specify a session password, and
+`--fps` to adjust frame rate (e.g. `py -3 agent.py 77.83.198.200 -p 9000 --pass MySecret123 --fps 30`).
 Without arguments the agent falls back to `agent_config.json`.
 
 The console prints the machine's **session ID** (a stable 9-digit number derived

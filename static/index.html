@@ -139,14 +139,37 @@ function disconnect() {
 
 function send(o) { if (ws && ws.readyState === 1) ws.send(JSON.stringify(o)); }
 
+let pendingFrame = null, isRendering = false;
+
 function draw(buf) {
+  pendingFrame = buf;
+  if (!isRendering) {
+    requestAnimationFrame(renderFrame);
+  }
+}
+
+function renderFrame() {
+  if (!pendingFrame) {
+    isRendering = false;
+    return;
+  }
+  isRendering = true;
+  const buf = pendingFrame;
+  pendingFrame = null;
   createImageBitmap(new Blob([buf], { type: "image/jpeg" })).then(bmp => {
     if (cv.width !== bmp.width || cv.height !== bmp.height) {
       cv.width = bmp.width; cv.height = bmp.height; fit();
     }
     ctx.drawImage(bmp, 0, 0);
     if (bmp.close) bmp.close();
-  }).catch(() => {});
+    if (pendingFrame) {
+      requestAnimationFrame(renderFrame);
+    } else {
+      isRendering = false;
+    }
+  }).catch(() => {
+    isRendering = false;
+  });
 }
 
 function fit() {
@@ -171,7 +194,7 @@ function imgPos(e) {
 
 cv.addEventListener("mousemove", e => {
   const now = performance.now();
-  if (now - lastMove < 30) return;  // ~30 moves/s is plenty
+  if (now - lastMove < 16) return;  // ~60 moves/s for responsive cursor
   lastMove = now;
   const p = imgPos(e);
   if (p) send({ cmd: "input", type: "move", x: p.x, y: p.y });

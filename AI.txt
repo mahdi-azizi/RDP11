@@ -3,7 +3,8 @@ i want to create a remote desktop software(service) like any desk on my colleagu
 it consist of two parts. one part is server software that runs on a alpine Linux server machine with a IP address.
 at client side, let me choose my server ip address and give it as command line argument to the agent.py.
 the second part is a windows software that runs on two clients. each client automatically connects to the server and gets a session id.
-each client can connect to the other windows machine and gets the full desktop access with the password "p@ssW0RdDD!!!"
+each client can connect to the other windows machine and gets the full desktop access with the default password "p@ssW0RdDD!!!".
+clients can determine their own desired password by applying command line argument switch --pass
 all client and server programs are written in python for the case of simplicity and vast variety of available network and system libraries.
 at this point i don't want any GUI for both programs. and i will add encryption later. i only want a prototype that works.
 i want the client view the remote client desktop through its default web browser.
@@ -47,6 +48,25 @@ DONE:
 i need an improvement. client can determine its own password for remote session by command line argument switch --pass
 this may cause changes at server side either
 
-can you use udp instead of tcp? i need low latency and fast screen capture.
+can you use udp instead of tcp for client/server communication? i need low latency and fast screen capture.
 
 add AES128 encryption to connection by creating a pre-shared key on server and client script and apply the encryption to the connection.
+
+
+
+
+
+-------------------------------- bullshit--------------------------------
+notebook:
+2026-10-25 18:47:53,703 INFO    connected to 85.206.170.117:9000 (session 936276085)
+2026-10-25 18:47:53,815 INFO    server accepted registration as session 936276085
+
+me(desktop):
+2026-10-25 14:12:39,033 INFO    connected to 77.83.198.200:9000
+2026-10-25 14:12:39,355 INFO    server accepted registration as session 911206623
+
+
+Server side:
+
+http://85.206.170.117:8080
+p@ssW0RdDD!!!

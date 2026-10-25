@@ -136,14 +136,17 @@ def recv_packet(conn):
 
 
 def push_frame(mailbox, data):
-    """Non-blocking frame hand-off to the viewer; drop oldest when slow."""
+    """Non-blocking frame hand-off to the viewer; drop oldest frame immediately."""
     try:
         mailbox.put_nowait(("frame", data))
     except queue.Full:
         try:
             mailbox.get_nowait()
+        except queue.Empty:
+            pass
+        try:
             mailbox.put_nowait(("frame", data))
-        except (queue.Empty, queue.Full):
+        except queue.Full:
             pass
 
 
@@ -333,7 +336,7 @@ def handle_viewer(viewer, ip):
             viewer.send(json.dumps({"resp": "auth_fail", "error": "wrong password"}))
             return
 
-        mailbox = queue.Queue(maxsize=60)
+        mailbox = queue.Queue(maxsize=1)
         with REG_LOCK:
             if not agent.alive or AGENTS.get(sid) is not agent:
                 viewer.send(json.dumps(
