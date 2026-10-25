@@ -201,7 +201,7 @@ class AgentClient:
         self.cfg = cfg
         self.sid = session_id()
         self.password = str(cfg.get("password", "p@ssW0RdDD!!!"))
-        self.fps = max(1, min(60, int(cfg.get("fps", 30))))
+        self.fps = max(1, int(cfg.get("fps", 30)))
         self.sock = None
         self.send_lock = threading.Lock()
         self.active = threading.Event()  # a viewer is attached
@@ -465,7 +465,7 @@ def main():
     parser.add_argument("--pass", "--password", dest="password",
                         help="session password for remote viewers (overrides agent_config.json)")
     parser.add_argument("--fps", type=int,
-                        help="target streaming FPS, e.g. 30 or 60 (overrides agent_config.json, default: 30)")
+                        help="target streaming FPS, e.g. 30, 60, or 120 (overrides agent_config.json, default: 30)")
     args = parser.parse_args()
     if args.server:
         cfg["server"] = args.server

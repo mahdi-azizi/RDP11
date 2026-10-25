@@ -1,5 +1,6 @@
 {
   "server": "77.83.198.200",
   "agent_port": 9000,
-  "password": "p@ssW0RdDD!!!"
+  "password": "p@ssW0RdDD!!!",
+  "fps": 30
 }

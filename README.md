@@ -66,6 +66,26 @@ The server address can be given as a command-line argument (as above), with opti
 `--fps` to adjust frame rate (e.g. `py -3 agent.py 77.83.198.200 -p 9000 --pass MySecret123 --fps 30`).
 Without arguments the agent falls back to `agent_config.json`.
 
+### Agent Configuration (`agent_config.json`)
+
+You can persist your settings in `agent_config.json`:
+
+```json
+{
+  "server": "77.83.198.200",
+  "agent_port": 9000,
+  "password": "p@ssW0RdDD!!!",
+  "fps": 30
+}
+```
+
+- `"server"`: Relay server IP or hostname.
+- `"agent_port"`: Agent TCP port on the relay server (default: `9000`).
+- `"password"`: Password required by viewers to connect to this machine.
+- `"fps"`: Target frame rate (e.g. `15` for low bandwidth, `30` for standard, `60` for smooth, `120`+ for high-refresh monitors). Values above 60 are supported, provided the machine has sufficient CPU power and network bandwidth.
+
+Command-line switches (`--fps`, `--pass`, `-p`, and `server`) take precedence over `agent_config.json`.
+
 The console prints the machine's **session ID** (a stable 9-digit number derived
 from the machine GUID — it survives restarts). The agent reconnects
 automatically; let Windows Firewall allow it when prompted.
