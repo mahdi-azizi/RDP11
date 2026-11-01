@@ -1,0 +1,6 @@
+{
+  "password": "p@ssW0RdDD!!!",
+  "http_port": 8080,
+  "agent_port": 9000,
+  "udp_port": 9001
+}

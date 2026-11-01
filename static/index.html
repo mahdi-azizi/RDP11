@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RDP11 Viewer</title>
+<style>
+  :root { color-scheme: dark; --bg:#0f1115; --panel:#1a1e25; --border:#2a2f38; --accent:#3b7cff; --text:#e8ecf2; --muted:#9aa4b2; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: radial-gradient(1200px 600px at 50% -10%, #1b2333, var(--bg)); color: var(--text);
+         font: 14px/1.5 "Segoe UI", system-ui, sans-serif; overflow: hidden; }
+  #login { position: fixed; inset: 0; display: flex; flex-direction: column;
+           align-items: center; justify-content: center; gap: 12px; padding: 24px; }
+  #login .card { background: var(--panel); border: 1px solid var(--border); border-radius: 14px;
+                 padding: 32px 28px; width: 340px; box-shadow: 0 20px 60px rgba(0,0,0,.45); }
+  #login h1 { letter-spacing: 3px; margin: 0 0 6px; font-weight: 700; font-size: 26px; text-align: center; }
+  #login .hint { color: var(--muted); margin: 0 0 18px; text-align: center; font-size: 13px; }
+  #login input, #login button { font: inherit; padding: 11px 14px; border-radius: 8px;
+            border: 1px solid var(--border); background: #12161c; color: inherit; width: 100%; }
+  #login input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(59,124,255,.18); }
+  #login button { background: var(--accent); border-color: var(--accent); cursor: pointer; font-weight: 600; margin-top: 6px; }
+  #login button:hover { filter: brightness(1.08); }
+  #err { color: #ff6b6b; min-height: 18px; max-width: 340px; text-align: center; font-size: 13px; }
+  #view { position: fixed; inset: 0; display: flex; flex-direction: column; }
+  #bar { display: flex; align-items: center; gap: 10px; padding: 8px 12px;
+         background: rgba(20,24,30,.85); backdrop-filter: blur(8px); border-bottom: 1px solid var(--border); }
+  #status { flex: 1; color: var(--muted); font-size: 13px; }
+  #bar button { font: inherit; padding: 6px 14px; border-radius: 7px;
+                 border: 1px solid var(--border); background: #242932; color: inherit; cursor: pointer; }
+  #bar button:hover { background: #2d3340; }
+  #cwrap { flex: 1; display: flex; align-items: center; justify-content: center; overflow: hidden; padding: 8px; }
+  canvas { background: #000; border-radius: 8px; cursor: crosshair; user-select: none;
+           box-shadow: 0 8px 30px rgba(0,0,0,.5); }
+  [hidden] { display: none !important; }
+  #filepanel { position: absolute; right: 12px; top: 52px; width: 340px; max-height: 62vh; overflow: auto;
+               background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
+               padding: 12px; z-index: 100; pointer-events: auto; box-shadow: 0 12px 40px rgba(0,0,0,.4); }
+  #filepanel input { background: #12161c; border: 1px solid var(--border); color: inherit; border-radius: 7px; padding: 7px 10px; }
+  #filepanel button { background: var(--accent); border: none; color: #fff; border-radius: 7px; padding: 7px 12px; cursor: pointer; }
+  #filepanel #fentries div { padding: 6px 8px; border-radius: 6px; }
+  #filepanel #fentries div:hover { background: #242932; }
+  #fstatus { color: var(--muted); font-size: 12px; margin-top: 6px; min-height: 16px; }
+</style>
+</head>
+<body>
+
+<div id="login">
+  <div class="card">
+    <h1>RDP11</h1>
+    <p class="hint">Enter the session ID shown in the remote agent's console window.</p>
+    <form id="loginform">
+      <input id="sid" inputmode="numeric" placeholder="Session ID" autocomplete="off" autofocus>
+      <input id="pw" type="password" placeholder="Password" style="margin-top:10px">
+      <button type="submit" style="margin-top:12px;width:100%">Connect</button>
+    </form>
+  </div>
+  <div id="err"></div>
+</div>
+
+<div id="view" hidden>
+  <div id="bar">
+    <span id="status"></span>
+    <button id="filesBtn">Files</button>
+    <button id="fs">Fullscreen</button>
+    <button id="disc">Disconnect</button>
+  </div>
+  <div id="filepanel" hidden style="position:absolute;right:10px;top:44px;width:320px;max-height:60vh;overflow:auto;background:#1b1e24;border:1px solid #333;border-radius:6px;padding:8px;z-index:100;pointer-events:auto">
+    <div style="display:flex;gap:6px;margin-bottom:6px">
+      <input id="fpath" value="." style="flex:1;padding:4px;pointer-events:auto">
+      <button id="flist">List</button>
+    </div>
+    <input type="file" id="fup" style="margin-bottom:6px">
+    <div id="fentries"></div>
+    <div id="fstatus" style="color:#9aa4b2;margin-top:4px"></div>
+  </div>
+  <div id="cwrap"><canvas id="cv" width="0" height="0"></canvas></div>
+</div>
+
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+const cv = $("cv"), ctx = cv.getContext("2d");
+let ws = null, connected = false, sawAuthOk = false;
+let wheelAcc = 0, lastMove = 0;
+let reconnectTimer = null, userDisconnected = false;
+
+function err(t) { $("err").textContent = t; }
+
+function showLogin(msg) {
+  connected = false; sawAuthOk = false;
+  if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+  if (ws) {
+    ws.onopen = ws.onmessage = ws.onclose = ws.onerror = null;
+    try { ws.close(); } catch (e) {}
+    ws = null;
+  }
+  $("view").hidden = true;
+  $("login").hidden = false;
+  err(msg || "");
+}
+
+function scheduleReconnect(reason) {
+  if (userDisconnected || !sawAuthOk) return;
+  connected = false;
+  $("status").textContent = (reason || "Connection lost") + " — Reconnecting...";
+  if (reconnectTimer) clearTimeout(reconnectTimer);
+  reconnectTimer = setTimeout(() => {
+    reconnectTimer = null;
+    if (!userDisconnected) {
+      connect(true);
+    }
+  }, 1500);
+}
+
+function connect(isAutoReconnect = false) {
+  const sid = $("sid").value.trim();
+  if (!/^\d{6,12}$/.test(sid)) { err("Enter the numeric session ID"); return; }
+  userDisconnected = false;
+  if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+  if (!isAutoReconnect) {
+    err("Connecting...");
+  } else {
+    $("status").textContent = "Reconnecting to session " + sid + "...";
+  }
+  if (ws) {
+    ws.onopen = ws.onmessage = ws.onclose = ws.onerror = null;
+    try { ws.close(); } catch (e) {}
+    ws = null;
+  }
+  ws = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") +
+                     location.host + "/ws");
+  ws.binaryType = "arraybuffer";
+  ws.onopen = () => ws.send(JSON.stringify(
+      { cmd: "auth", id: Number(sid), password: $("pw").value }));
+  ws.onmessage = onMsg;
+  ws.onerror = () => {};
+  ws.onclose = e => {
+    if (sawAuthOk && !userDisconnected) {
+      scheduleReconnect("Disconnected (" + e.code + ")");
+    } else {
+      showLogin(e.code === 1006 ? "Could not connect to server" : "Disconnected (" + e.code + ")");
+    }
+  };
+}
+
+function onMsg(e) {
+  if (e.data instanceof ArrayBuffer) { draw(e.data); return; }
+  let m;
+  try { m = JSON.parse(e.data); } catch (err2) { return; }
+  if (m.resp && String(m.resp).startsWith("file_")) { window.onMsgFile(m); return; }
+  if (m.resp === "auth_ok") {
+    sawAuthOk = true; connected = true;
+    $("login").hidden = true; $("view").hidden = false;
+    $("status").textContent = "Connected to session " + m.id;
+  } else if (m.resp === "auth_fail" || m.resp === "error") {
+    showLogin(m.error || "Error");
+  }
+}
+
+function disconnect() {
+  userDisconnected = true;
+  if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+  showLogin("");
+}
+
+function send(o) { if (ws && ws.readyState === 1) ws.send(JSON.stringify(o)); }
+
+let pendingFrame = null, isRendering = false;
+
+function draw(buf) {
+  pendingFrame = buf;
+  if (!isRendering) {
+    requestAnimationFrame(renderFrame);
+  }
+}
+
+function renderFrame() {
+  if (!pendingFrame) {
+    isRendering = false;
+    return;
+  }
+  isRendering = true;
+  const buf = pendingFrame;
+  pendingFrame = null;
+  createImageBitmap(new Blob([buf], { type: "image/jpeg" })).then(bmp => {
+    if (cv.width !== bmp.width || cv.height !== bmp.height) {
+      cv.width = bmp.width; cv.height = bmp.height; fit();
+    }
+    ctx.drawImage(bmp, 0, 0);
+    if (bmp.close) bmp.close();
+    if (pendingFrame) {
+      requestAnimationFrame(renderFrame);
+    } else {
+      isRendering = false;
+    }
+  }).catch(() => {
+    isRendering = false;
+  });
+}
+
+function fit() {
+  if (!cv.width) return;
+  const aw = innerWidth - 16, ah = innerHeight - 44;
+  const s = Math.min(aw / cv.width, ah / cv.height);
+  cv.style.width = Math.round(cv.width * s) + "px";
+  cv.style.height = Math.round(cv.height * s) + "px";
+}
+window.addEventListener("resize", fit);
+
+// Coordinates are mapped from displayed canvas size back to frame pixels;
+// the agent scales them again from frame pixels to real screen pixels.
+function imgPos(e) {
+  if (!cv.width) return null;
+  const r = cv.getBoundingClientRect();
+  return {
+    x: Math.max(0, Math.min(cv.width, Math.round((e.clientX - r.left) * cv.width / r.width))),
+    y: Math.max(0, Math.min(cv.height, Math.round((e.clientY - r.top) * cv.height / r.height))),
+  };
+}
+
+cv.addEventListener("mousemove", e => {
+  const now = performance.now();
+  if (now - lastMove < 16) return;  // ~60 moves/s for responsive cursor
+  lastMove = now;
+  const p = imgPos(e);
+  if (p) send({ cmd: "input", type: "move", x: p.x, y: p.y });
+});
+cv.addEventListener("mousedown", e => {
+  e.preventDefault();
+  const p = imgPos(e);
+  if (p) send({ cmd: "input", type: "btn", button: e.button, down: true, x: p.x, y: p.y });
+});
+cv.addEventListener("mouseup", e => {
+  const p = imgPos(e);
+  if (p) send({ cmd: "input", type: "btn", button: e.button, down: false, x: p.x, y: p.y });
+});
+cv.addEventListener("contextmenu", e => e.preventDefault());
+cv.addEventListener("wheel", e => {
+  e.preventDefault();
+  wheelAcc += e.deltaY;
+  if (Math.abs(wheelAcc) >= 120) {
+    send({ cmd: "input", type: "wheel", amount: wheelAcc > 0 ? -2 : 2 });
+    wheelAcc = 0;
+  }
+}, { passive: false });
+
+// F5/F11/F12 stay with the browser (refresh/fullscreen/devtools); everything
+// else is forwarded and the browser's own handling is suppressed.
+function keyHandler(down) {
+  return e => {
+    if (!connected) return;
+    if (e.target && (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA")) return;
+    if (e.key === "F5" || e.key === "F11" || e.key === "F12") return;
+    e.preventDefault();
+    send({ cmd: "input", type: "key", key: e.key, code: e.code, down });
+  };
+}
+window.addEventListener("keydown", keyHandler(true));
+window.addEventListener("keyup", keyHandler(false));
+// Leaving the tab/window must not leave keys stuck down on the remote machine.
+window.addEventListener("blur", () => { if (connected) send({ cmd: "input", type: "release_all" }); });
+
+setInterval(() => { if (connected) send({ cmd: "ping" }); }, 15000);
+
+$("loginform").addEventListener("submit", e => { e.preventDefault(); connect(); });
+$("filesBtn").addEventListener("click", () => { $("filepanel").hidden = !$("filepanel").hidden; });
+
+let downloadChunks = {};
+$("flist").addEventListener("click", () => {
+  send({ cmd: "file_list", path: $("fpath").value.trim() || "." });
+});
+$("fup").addEventListener("change", async e => {
+  const f = e.target.files[0];
+  if (!f) return;
+  $("fstatus").textContent = "Uploading " + f.name + "...";
+  const buf = await f.arrayBuffer();
+  const b64 = btoa(String.fromCharCode(...new Uint8Array(buf)));
+  const remote = ($("fpath").value.trim() || ".") + "/" + f.name;
+  const chunkSize = 256*1024*4/3;
+  for (let i=0;i<b64.length;i+=chunkSize) {
+    const chunk = b64.slice(i, i+chunkSize);
+    send({ cmd: "file_upload", path: remote, data: chunk, append: i>0, done: i+chunkSize>=b64.length });
+  }
+});
+
+function renderEntries(entries, path) {
+  const div = $("fentries");
+  div.innerHTML = "";
+  entries.forEach(en => {
+    const row = document.createElement("div");
+    row.style.cursor = "pointer";
+    row.style.padding = "2px 0";
+    row.textContent = (en.type==="dir"?"📁 ":"📄 ") + en.name + (en.type==="file"?" ("+en.size+")":"");
+    row.onclick = () => {
+      if (en.type === "dir") { $("fpath").value = path + "/" + en.name; $("flist").click(); }
+      else {
+        downloadChunks[en.name] = { chunks:[], size:0 };
+        send({ cmd: "file_download", path: path + "/" + en.name });
+        $("fstatus").textContent = "Downloading " + en.name + "...";
+      }
+    };
+    div.appendChild(row);
+  });
+}
+
+window.onMsgFile = function(m) {
+  if (m.resp === "file_list") {
+    if (m.error) { $("fstatus").textContent = "Error: " + m.error; return; }
+    renderEntries(m.entries || [], m.path);
+    $("fstatus").textContent = "";
+  } else if (m.resp === "file_chunk") {
+    if (m.error) { $("fstatus").textContent = "Error: " + m.error; return; }
+    const name = (m.path||"").split("/").pop();
+    const dc = downloadChunks[name] || (downloadChunks[name]={chunks:[],size:m.size||0});
+    dc.size = m.size || dc.size;
+    if (m.data) dc.chunks.push(m.data);
+    if (m.done) {
+      const b64 = dc.chunks.join("");
+      const bytes = Uint8Array.from(atob(b64), c=>c.charCodeAt(0));
+      const blob = new Blob([bytes]);
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = name;
+      a.click();
+      $("fstatus").textContent = "Downloaded " + name;
+      delete downloadChunks[name];
+    }
+  } else if (m.resp === "file_upload_ok") {
+    if (m.error) $("fstatus").textContent = "Upload error: " + m.error;
+    else { $("fstatus").textContent = "Uploaded " + (m.path||"").split("/").pop(); setTimeout(() => { $("fstatus").textContent = ""; }, 2000); }
+  }
+};
+$("disc").addEventListener("click", disconnect);
+$("fs").addEventListener("click", () => {
+  if (document.fullscreenElement) document.exitFullscreen();
+  else document.documentElement.requestFullscreen();
+});
+</script>
+</body>
+</html>
